@@ -6,11 +6,14 @@ from settings import *
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+github = github3.login(username=github_username, password=github_password)
+con = mysql.connector.connect(user='root', database='bugzilla')
+
 if not owner:
     owner = github.user()
 
 if not assignee:
-    assignee = owner.username
+    assignee = owner.login
 
 q = """
 select
@@ -24,6 +27,8 @@ from
     bugs
 order by
     bug_id
+limit
+    746, 18446744073709551615;
 """
 
 q2 = """
@@ -44,8 +49,7 @@ repositories = {
     4: "owlcat",
 }
 
-github = github3.login(username=github_username, password=github_password)
-con = mysql.connector.connect(user='root', database='bugzilla')
+
 cur = con.cursor()
 cur.execute(q)
 rows = cur.fetchall()
@@ -63,12 +67,18 @@ for row in rows:
     if not issue:
         raise Exception("something went wrong")
     logger.info(issue)
-    if status in ["CLOSED", "RESOLVED"] or resolution in "fixed":
-        logger.info("closing issue")
-        issue.close()
+
+    ## add the comments
     cur.execute(q2 % id)
     rows = cur.fetchall()
     for row in rows:
         logger.info("adding comment")
-        thetext = row[0]
-        issue.create_comment(thetext)
+        thetext = row[0].encode('utf-8', 'ignore').strip()
+        if thetext:
+            ## github doesn't accept empty comments
+            issue.create_comment(thetext)
+
+    ## close the issue (if closed or resolved)
+    if status in ["CLOSED", "RESOLVED"] or resolution in "fixed":
+        logger.info("closing issue")
+        issue.close()
