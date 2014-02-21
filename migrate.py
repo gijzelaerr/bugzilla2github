@@ -22,24 +22,36 @@ select
     bugs.bug_status as status,
     bugs.bug_severity as severity,
     bugs.resolution as resolution,
-    bugs.product_id as product
+    bugs.product_id as product,
+    bugs.creation_ts as ts,
+    profiles.realname as reporter
 from
-    bugs
+    bugs,
+    profiles
+where
+	bugs.reporter = profiles.userid
 order by
     bug_id
-limit
-    746, 18446744073709551615;
+;
 """
+
+
 
 q2 = """
 select
-    thetext
+    longdescs.thetext,
+    longdescs.bug_when as ts,
+    profiles.realname as reporter
 from
-    longdescs
+    longdescs,
+    profiles
 where
     bug_id=%s
+and
+     longdescs.who = profiles.userid
 order by
     bug_when
+;
 """
 
 repositories = {
@@ -54,15 +66,17 @@ cur = con.cursor()
 cur.execute(q)
 rows = cur.fetchall()
 
+num_bugs = len(rows)
 for row in rows:
-    id, short, status, severity, resolution, product = row
+    id, short, status, severity, resolution, product, ts, who = row
     repository = repositories[product]
     labels = []
     if resolution:
         labels.append(resolution.lower())
-    logger.info("making new issue for bug " + str(id))
+    logger.info("making new issue for bug (%s/%s)" % (str(id), str(num_bugs)))
+    formatted = "at %s %s reported:\n%s" % (ts, who, short)
     issue = github.create_issue(owner=owner, repository=repository,
-                                title=short, body=short, labels=labels,
+                                title=short, body=formatted, labels=labels,
                                 assignee=assignee)
     if not issue:
         raise Exception("something went wrong")
@@ -73,10 +87,12 @@ for row in rows:
     rows = cur.fetchall()
     for row in rows:
         logger.info("adding comment")
-        thetext = row[0].encode('utf-8', 'ignore').strip()
+        thetext, ts, reporter = row
+        thetext = thetext.strip()
+        ## github doesn't accept empty comments
         if thetext:
-            ## github doesn't accept empty comments
-            issue.create_comment(thetext)
+            formatted = "at %s %s replied:\n%s" % (ts, reporter, thetext)
+            issue.create_comment(formatted)
 
     ## close the issue (if closed or resolved)
     if status in ["CLOSED", "RESOLVED"] or resolution in "fixed":
