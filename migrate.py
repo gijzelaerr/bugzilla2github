@@ -3,6 +3,9 @@ import github3
 import logging
 from settings import *
 
+
+id_file = open('id_file', 'a')
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,8 @@ order by
     bug_id
 ;
 """
+    # limit
+    #1, 18446744073709551615;
 
 
 
@@ -68,33 +73,45 @@ rows = cur.fetchall()
 
 num_bugs = len(rows)
 for row in rows:
-    id, short, status, severity, resolution, product, ts, who = row
+    id_, short, status, severity, resolution, product, ts, who = row
     repository = repositories[product]
     labels = []
     if resolution:
+        logging.info("adding label: %s" % resolution)
         labels.append(resolution.lower())
-    logger.info("making new issue for bug (%s/%s)" % (str(id), str(num_bugs)))
-    formatted = "at %s %s reported:\n%s" % (ts, who, short)
+    logger.info("making new issue for bug (%s/%s)" % (str(id_), str(num_bugs)))
+    formatted = "##### at %s %s reported:\n%s" % (ts, who, short)
     issue = github.create_issue(owner=owner, repository=repository,
                                 title=short, body=formatted, labels=labels,
                                 assignee=assignee)
+
+    logger.info("bugzilla id: %s, github id: %s" % (id_, issue.number))
+    id_file.write("%s -> %s\n" % (id_, issue.number))
+
     if not issue:
         raise Exception("something went wrong")
     logger.info(issue)
 
-    ## add the comments
-    cur.execute(q2 % id)
+    ## fetch the comments
+    cur.execute(q2 % id_)
     rows = cur.fetchall()
+
+    if not len(rows):
+        continue
+
+    response = "*Original comment thread migrated from bugzilla*\n\n"
     for row in rows:
         logger.info("adding comment")
         thetext, ts, reporter = row
         thetext = thetext.strip()
         ## github doesn't accept empty comments
         if thetext:
-            formatted = "at %s %s replied:\n%s" % (ts, reporter, thetext)
-            issue.create_comment(formatted)
+            response += "##### at %s %s replied:\n%s\n\n" % (ts, reporter, thetext)
+    issue.create_comment(response)
 
     ## close the issue (if closed or resolved)
-    if status in ["CLOSED", "RESOLVED"] or resolution in "fixed":
-        logger.info("closing issue")
+    if status in ["CLOSED", "RESOLVED"]:
+        logger.info("closing issue, resolution: %s, status: %s" % (resolution, status))
         issue.close()
+    else:
+        logger.info("NOT closing issue, resolution: %s, status: %s" % (resolution, status))
